@@ -1,29 +1,32 @@
 import sqlite3
 
-connection = sqlite3.connect('db/urls.db')
-cursor = connection.cursor()
 
-def lookup_url_for_slug(slug: str) -> str:
-    cursor.execute("SELECT url FROM urls WHERE slug=?", (slug,))
-    result = cursor.fetchone()
+class DB:
+    def __init__(self, db_path: str):
+        self.conn = sqlite3.connect(db_path)
+        self.cursor = self.conn.cursor()
 
-    return result[0] if result else None
+    def __del__(self):
+        self.conn.close()
 
-def update_url_for_slug(slug: str, url: str) -> None:
-    cursor.execute("INSERT OR REPLACE INTO urls (slug, url) VALUES (?, ?)", (slug, url))
+    def lookup_url_for_slug(self, slug: str) -> str:
+        self.cursor.execute("SELECT url FROM urls WHERE slug=?", (slug,))
+        result = self.cursor.fetchone()
 
-    connection.commit()
+        return result[0] if result else None
 
-def list_all(n: int = 100):
-    cursor.execute("SELECT slug, url FROM urls LIMIT ?", (n,))
-    result = cursor.fetchall()
+    def update_url_for_slug(self, slug: str, url: str) -> None:
+        self.cursor.execute(
+            "INSERT OR REPLACE INTO urls (slug, url) VALUES (?, ?)", (slug, url)
+        )
+        self.conn.commit()
 
-    return result
+    def list_all(self, n: int = 100):
+        self.cursor.execute("SELECT slug, url FROM urls LIMIT ?", (n,))
+        result = self.cursor.fetchall()
 
-def clear(slug: str):
-    cursor.execute("DELETE FROM urls WHERE slug=?", (slug,))
-    connection.commit()
+        return result
 
-# close connections on exit
-import atexit
-atexit.register(lambda: connection.close())
+    def clear(self, slug: str):
+        self.cursor.execute("DELETE FROM urls WHERE slug=?", (slug,))
+        self.conn.commit()

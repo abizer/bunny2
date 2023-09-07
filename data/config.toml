@@ -1,0 +1,4 @@
+db_path = 'data/urls.db'
+
+[api_keys]
+dev = "12345"
