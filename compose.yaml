@@ -1,0 +1,9 @@
+services:
+  bunny2:
+    build: .
+    ports:
+      - 8000:8000
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
