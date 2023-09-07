@@ -44,7 +44,7 @@ async def list():
 @app.delete("/{path:path}", dependencies=[Depends(authenticated)])
 async def delete(path: str):
     slug = transform_path_to_slug(path)
-    print(f"deleting {slug}")
+    logging.info(f"deleting {slug}")
     db.clear(slug)
 
     return Response(content=slug, status_code=200)
@@ -53,11 +53,9 @@ async def delete(path: str):
 @app.post("/{path:path}", dependencies=[Depends(authenticated)])
 async def update(path: str, request: Request):
     payload = await request.body()
-    print(payload)
     url = transform_payload_to_url(payload)
-    print(url)
     slug = transform_path_to_slug(path, url)
-    print(f"{path} => {slug} => {url}")
+    logging.info(f"updating {path} => {slug} => {url}")
 
     db.update_url_for_slug(slug, url)
 
@@ -67,9 +65,8 @@ async def update(path: str, request: Request):
 @app.get("/{path:path}")
 async def bounce(path: str):
     slug = transform_path_to_slug(path)
-    print(f"path {path} => {slug}")
     url = db.lookup_url_for_slug(slug)
-    print(f"slug {slug} => {url}")
+    logging.debug(f"getting {path} => {slug} => {url}")
 
     if url:
         return RedirectResponse(url)
