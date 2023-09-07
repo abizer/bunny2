@@ -1,19 +1,31 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
 from uvicorn import run
-from bunny2.db import lookup_url_for_slug, update_url_for_slug, list_all
+from bunny2.db import lookup_url_for_slug, update_url_for_slug, list_all, clear
 from bunny2.transform import transform_path_to_slug, transform_payload_to_url
+from bunny2.plugins import load_plugins
 
 import logging
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
+# load plugins
+load_plugins()
+
 
 @app.get("/")
 @app.get("/list")
 async def list():
     return list_all()
+
+@app.delete("/{path:path}", status_code=200)
+async def delete(path: str):
+    slug = transform_path_to_slug(path)
+    print(f"deleting {slug}")
+    clear(slug)
+    
+    return Response(content=slug)
 
 
 @app.get("/{path:path}")

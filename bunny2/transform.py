@@ -3,45 +3,22 @@
 from typing import List, Any
 import re
 import random
-
-r_ = re.compile
-
-def patterned_slug(payload: str) -> str:
-    hex32 = f"{random.getrandbits(32):08X}"
-    
-    gdrive_re = re.compile(r'^https://(docs|drive|slides|sheets).google.com/.+')
-    if gdrive_re.match(payload):
-        return f"/g/{hex32}"
-
-    # default create shorturls in the /s/ namespace
-    return f"/s/{hex32}"
-        
-def check_alias(alias):
-    # in the future check if this is valid
-    return alias
-
-plugins = {
-    'hobby':  (r_(r'^h ?(?P<idx>\d+)'),
-     lambda _, p, idx: f'/hobby/{idx}'),
-    'shorten': (r_(r'^shorten'),
-                lambda _, payload: patterned_slug(payload)),
-    'alias': (r_(r'^(?:a|alias)/(?P<alias>\w+)'),
-              lambda _, payload, alias: check_alias(alias)),
-    # default case
-    'reflection': (r_(r'(?P<slug>.+)'), lambda _, p, slug: slug)
-}
+from .plugins import plugin_registry
 
 class path_dispatcher:
     def _dispatch(self, processors: List[Any], path: str, payload: bytes):
-        # first regex processors
+        # first process all the regex-based rules
         for name, (pattern, fn) in processors.items():
             found = pattern.match(path)
             if found:
                 print(f"dispatching to {name}")
-                return fn(self, payload, *found.groups())        
+                return fn(self, payload, *found.groups())
+
+        # default case: reflection
+        return path
 
     def run(self, path: str, payload: bytes):
-        return self._dispatch(plugins, path, payload)
+        return self._dispatch(plugin_registry, path, payload)
 
 def transform_path_to_slug(path: str, payload: bytes = None) -> str:
     """
