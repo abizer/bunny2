@@ -1,0 +1,13 @@
+[Unit]
+Description=Bunny2 URL Redirector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=<script>
+Restart=always
+User=<user>
+
+[Install]
+WantedBy=multi-user.target
+
