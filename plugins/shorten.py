@@ -1,4 +1,6 @@
-from bunny2.plugins import register
+import random 
+
+from . import register
 
 def hex32():
     return f"{random.getrandbits(32):08x}"
