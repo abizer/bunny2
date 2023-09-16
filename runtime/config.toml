@@ -1,0 +1,4 @@
+db_path = 'runtime/urls.db'
+
+[api_keys]
+dev = "12345"

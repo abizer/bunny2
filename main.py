@@ -1,3 +1,5 @@
+import sys
+import os 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
@@ -12,13 +14,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CONFIG_PATH = 'runtime/config.toml'
 
-config_path = "data/config.toml"
-with open(config_path, "r") as f:
-    config = toml.load(f)
-    db_path = config["db_path"]
+config_root = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(config_root, DEFAULT_CONFIG_PATH)
+if len(sys.argv) > 1:
+    config_path = sys.argv[1]
+
+with open(config_path, 'r') as config_file:
+    config = toml.load(config_file)
+    db_path = os.path.join(config_root, config["db_path"])
     api_keys = set(config["api_keys"].values())
-
 
 app = FastAPI()
 db = DB(db_path)
@@ -75,4 +81,4 @@ async def bounce(path: str):
 
 
 if __name__ == "__main__":
-    run(app, host="0.0.0.0", port=8000, reload=True)
+    run(app, host="127.0.0.1", port=8000)
