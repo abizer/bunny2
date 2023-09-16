@@ -2,6 +2,7 @@ import importlib
 import os
 import re
 import sqlite3
+import sys
 from typing import List, Any, Tuple
 import logging
 
@@ -27,7 +28,6 @@ with open(config_path, 'r') as config_file:
     api_keys = set(config["api_keys"].values())
 
 app = FastAPI()
-db = DB(db_path)
 
 # type alias this, it's a hack so sorry
 Tdb = Tuple[sqlite3.Connection, sqlite3.Cursor]
@@ -38,7 +38,7 @@ def authenticated(api_key: str = Depends(oauth2_scheme)):
     if api_key not in api_keys:
         raise HTTPException(status_code=401)
     
-def db():
+def get_db():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
@@ -82,11 +82,11 @@ class Dispatcher:
         for name, (pattern, fn) in processors.items():
             found = pattern.match(path)
             if found:
-                logging.debug(f"dispatching {path} to {name}")
+                logger.debug(f"dispatching {path} to {name}")
                 try:
                     return fn(self, payload, *found.groups())
                 except Exception as e:
-                    logging.error(f"error processing {path} with {name}: {e}")
+                    logger.error(f"error processing {path} with {name}: {e}")
                     return e
 
         # default case: reflection
@@ -96,7 +96,7 @@ class Dispatcher:
         return self._dispatch(plugin_registry, path, payload)
 
 
-def path_to_action(db: Tdb, path: str, payload: bytes = None) -> str:
+def path_to_url(db: Tdb, path: str, payload: bytes = None) -> str:
     """converts the given path to a slug for database lookup
 
     to maintain consistency, the same function is used on both read and write paths.
@@ -143,25 +143,25 @@ def payload_to_url(payload: bytes) -> str:
 
 
 @app.get("/list", dependencies=[Depends(authenticated)])
-async def list(db: Tdb = Depends[db]):
-    return db.list_all()
+async def list(db: Tdb = Depends(get_db)):
+    return list_urls(db)
 
 
 @app.delete("/{path:path}", dependencies=[Depends(authenticated)])
-async def delete(path: str):
+async def delete(path: str, db: Tdb = Depends(get_db)):
     slug = path_to_url(path)
-    logging.info(f"deleting {slug}")
+    logger.info(f"deleting {slug}")
     db.clear(slug)
 
     return Response(content=slug, status_code=200)
 
 
 @app.post("/{path:path}", dependencies=[Depends(authenticated)])
-async def update(path: str, request: Request):
+async def update(path: str, request: Request, db: Tdb = Depends(get_db)):
     payload = await request.body()
-    url = transform_payload_to_url(payload)
-    slug = transform_path_to_slug(path, url)
-    logging.info(f"updating {path} => {slug} => {url}")
+    url = payload_to_url(payload)
+    slug = path_to_url(path, url)
+    logger.info(f"updating {path} => {slug} => {url}")
 
     db.update_url_for_slug(slug, url)
 
@@ -169,15 +169,15 @@ async def update(path: str, request: Request):
 
 
 @app.get("/{path:path}")
-async def bounce(path: str):
-    slug = transform_path_to_slug(path)
-    url = db.lookup_url_for_slug(slug)
-    logging.debug(f"getting {path} => {slug} => {url}")
+async def bounce(path: str, db: Tdb = Depends(get_db)):
+    url = path_to_url(db, path)
+    # url = db.lookup_url_for_slug(slug)
+    logger.debug(f"getting {path} => {url}")
 
-    if url:
-        return RedirectResponse(url)
-    else:
-        return Response(content=slug, status_code=404)
+    # if url:
+    return RedirectResponse(url)
+    # else:
+    #    return Response(content=slug, status_code=404)
 
 
 if __name__ == "__main__":
