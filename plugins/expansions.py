@@ -16,6 +16,6 @@ def google(dispatcher, payload: Payload, query: str) -> Action:
 def chatgpt(dispatcher, payload: Payload) -> Action:
     return Redirect("https://chat.openai.com/")
 
-@register(r"c(?:al)? ?(?P<idx>\d)?")
+@register(r"^c(?:al)? ?(?P<idx>\d)?$")
 def cal(dispatcher, payload: Payload, idx: int = 0) -> Action:
     return Redirect(f"https://calendar.google.com/calendar/u/{idx}/r")
