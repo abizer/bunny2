@@ -2,8 +2,22 @@ import importlib
 import logging
 import os 
 import re
+from typing import Tuple
 
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+Action = Tuple[str, str]
+Path = str 
+Slug = str
+Url = str
+Payload = bytes
+
+def Lookup(slug: Slug) -> Action:
+    return ('lookup', slug)
+
+def Redirect(url: Url) -> Action: 
+    return ('redirect', url)
 
 plugin_registry = {}
 
@@ -20,6 +34,6 @@ def load_plugins(src: str = "plugins"):
 def register(pattern: str):
     def wrapper(fn):
         name = '.'.join((fn.__module__, fn.__name__))
-        logger.info(f"registering {name} under {pattern}")
+        logger.debug(f"registering {name} under {pattern}")
         plugin_registry[name] = (re.compile(pattern), fn)
     return wrapper

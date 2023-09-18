@@ -9,28 +9,28 @@ import logging
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.encoders import jsonable_encoder
 import toml
 
-from plugins import plugin_registry
+import sqlalchemy
+import databases
 
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = 'runtime/config.toml'
+# get the plugins
+from plugins import plugin_registry, load_plugins, Action, Lookup
+load_plugins()
 
+# load config
+DEFAULT_CONFIG_PATH = 'runtime/config.toml'
 config_root = os.path.dirname(os.path.abspath(__file__))
 config_path = os.path.join(config_root, DEFAULT_CONFIG_PATH)
-if len(sys.argv) > 1:
-    config_path = sys.argv[1]
 
 with open(config_path, 'r') as config_file:
     config = toml.load(config_file)
-    db_path = os.path.join(config_root, config["db_path"])
+    DB_URL = config["db_url"]
     api_keys = set(config["api_keys"].values())
-
-app = FastAPI()
-
-# type alias this, it's a hack so sorry
-Tdb = Tuple[sqlite3.Connection, sqlite3.Cursor]
 
 # some basic security to protect against randoms
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -38,41 +38,49 @@ def authenticated(api_key: str = Depends(oauth2_scheme)):
     if api_key not in api_keys:
         raise HTTPException(status_code=401)
     
-def get_db():
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+# connect to db
+database = databases.Database(DB_URL)
+metadata = sqlalchemy.MetaData()
+urls = sqlalchemy.Table(
+    "urls",
+    metadata,
+    sqlalchemy.Column("slug", sqlalchemy.String, primary_key=True),
+    sqlalchemy.Column("url", sqlalchemy.String),
+)
 
-    try:
-        yield conn, cursor 
-    finally:
-        conn.close()
+engine = sqlalchemy.create_engine(
+    DB_URL, connect_args={"check_same_thread": False}
+)
+metadata.create_all(engine)
 
-def lookup_url_for_slug(db: Tdb, slug: str) -> str:
-        _, cursor = db
-        cursor.execute("SELECT url FROM urls WHERE slug=?", (slug,))
-        result = cursor.fetchone()
+app = FastAPI()
 
-        return result[0] if result else None
+@app.on_event("startup")
+async def startup():
+    await database.connect()
 
-def update_url_for_slug(db: Tdb, slug: str, url: str) -> None:
-    conn, cursor = db
-    cursor.execute(
-        "INSERT OR REPLACE INTO urls (slug, url) VALUES (?, ?)", (slug, url)
-    )
-    conn.commit()
 
-def list_urls(db: Tdb, n: int = 100):
-    _, cursor = db
-    cursor.execute("SELECT slug, url FROM urls LIMIT ?", (n,))
-    result = cursor.fetchall()
+@app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()
 
+async def lookup_url_for_slug(slug: str) -> str:
+    query = urls.select().where(urls.c.slug == slug)
+    result = await database.fetch_one(query)
+    return result["url"] if result else None
+
+async def update_url_for_slug(slug: str, url: str) -> None:
+    query = f"INSERT OR REPLACE INTO urls (slug, url) VALUES (:slug, :url)"
+    await database.execute(query=query, values={"slug": slug, "url": url})
+
+async def list_urls(n: int = 100):
+    query = urls.select().limit(n)
+    result = await database.fetch_all(query)
     return result
 
-def clear_urls(db: Tdb, slug: str):
-    conn, cursor = db
-    cursor.execute("DELETE FROM urls WHERE slug=?", (slug,))
-    conn.commit()
-    
+async def clear_urls(slug: str):
+    query = urls.delete().where(urls.c.slug == slug)
+    await database.execute(query)
 
 # not sure why i'm reimplementing the builtin path based dispatcher logic
 # to do it this way. ill figure out how to do that later
@@ -88,45 +96,27 @@ class Dispatcher:
                 except Exception as e:
                     logger.error(f"error processing {path} with {name}: {e}")
                     return e
+            else:
+                logger.debug(f"{name}/{pattern} did not match {path}")
 
-        # default case: reflection
-        return path
-
-    def run(self, path: str, payload: bytes):
-        return self._dispatch(plugin_registry, path, payload)
-
-
-def path_to_url(db: Tdb, path: str, payload: bytes = None) -> str:
-    """converts the given path to a slug for database lookup
-
-    to maintain consistency, the same function is used on both read and write paths.
-    on the write path, the additional context from the payload may be used for deriving
-      new slugs on known patterns.
-
-    default behavior is that the request path is the slug
-    transform_path_to_slug("exploring") -> "exploring"
-
-    slugs can be aliased to other slugs
-    transform_path_to_slug("h5") -> "/hobby/5"
-
-    can implement a pattern-based shorturl generator
-    transform_path_to_slug("shorten", "https://docs.google.com/...") -> "/g/ef45gh"
-
-    do arbitrary work, like curl-able pastebin
-    transform_path_to_slug("paste", <file contents>) -> "/p/abd4f5b32"
-    transform_path_to_slug("pasted/debuglogs", <file contents>) -> "/p/20230823/debuglogs"
-
-    it's expected that the single argument call produces only readable slugs and the
-    double argument call produces only writable slugs
-    """
-
-    dispatch = Dispatcher().run(path, payload)
-    url = dispatch if dispatch.startswith('http') else lookup_url_for_slug(db, dispatch)
-    return url
-    
+    def get_action(self, path: str, payload: bytes) -> Action:
+        action = self._dispatch(plugin_registry, path, payload)
+        if not action:
+            # if no regex rules applied, the default is to try a lookup
+            logger.debug(f"{path} matched no rules, looking up as slug")
+            return Lookup(path)
+        else:
+            return action
 
 
-def payload_to_url(payload: bytes) -> str:
+def process_path(path: str, payload: bytes = None) -> str:
+    # the api is always path -> (action, target)
+    # where action can be ('lookup', 'redirect')
+    action = Dispatcher().get_action(jsonable_encoder(path), payload)
+    logger.debug(f"{path} => {action}")
+    return action
+
+def process_payload(path: str, payload: bytes) -> str:
     """convert the given payload to a url
 
     eventually this will be extended so that, e.g. files can be
@@ -139,45 +129,63 @@ def payload_to_url(payload: bytes) -> str:
 
     if is_url:
         return bytes.decode(payload).strip()
+    
 
-
-
+# ====== app routing logic =============================
 @app.get("/list", dependencies=[Depends(authenticated)])
-async def list(db: Tdb = Depends(get_db)):
-    return list_urls(db)
-
-
-@app.delete("/{path:path}", dependencies=[Depends(authenticated)])
-async def delete(path: str, db: Tdb = Depends(get_db)):
-    slug = path_to_url(path)
-    logger.info(f"deleting {slug}")
-    db.clear(slug)
-
-    return Response(content=slug, status_code=200)
-
-
-@app.post("/{path:path}", dependencies=[Depends(authenticated)])
-async def update(path: str, request: Request, db: Tdb = Depends(get_db)):
-    payload = await request.body()
-    url = payload_to_url(payload)
-    slug = path_to_url(path, url)
-    logger.info(f"updating {path} => {slug} => {url}")
-
-    db.update_url_for_slug(slug, url)
-
-    return slug
-
+async def list():
+    return await list_urls(n=100)
 
 @app.get("/{path:path}")
-async def bounce(path: str, db: Tdb = Depends(get_db)):
-    url = path_to_url(db, path)
-    # url = db.lookup_url_for_slug(slug)
-    logger.debug(f"getting {path} => {url}")
+async def bounce(path: str):
+    action = process_path(path)
+    
+    url = None
+    match action:
+        case ('lookup', slug):
+            url = await lookup_url_for_slug(slug)
+        case ('redirect', target):
+            url = target
 
-    # if url:
+    # default case is to google whatever was passed in
+    if not url:
+        logger.debug(f"action or lookup failed: googling {path}")
+        google = plugin_registry['plugins.expansions.google'][1]
+        _, url = google(None, None, query=path)
+
+    logger.debug(f"{path} => {url}")
     return RedirectResponse(url)
-    # else:
-    #    return Response(content=slug, status_code=404)
+
+    
+@app.post("/{path:path}", dependencies=[Depends(authenticated)])
+async def update(path: str, request: Request):
+    logger.debug(f"update request: {path}")
+    payload = await request.body()
+    url = process_payload(path, payload)
+
+
+    # action should be a ('lookup', slug)
+    action = process_path(path, url)
+
+    match action:
+        case ('lookup', slug):
+            logger.info(f"updating {slug} => {url}")
+            await update_url_for_slug(slug, url)
+            return RedirectResponse(url)
+    
+    return Response(status_code=404)
+
+@app.delete("/{path:path}", dependencies=[Depends(authenticated)])
+async def delete(path: str):
+    action = process_path(path)
+
+    match action:
+        case ('lookup', slug):
+            logger.info(f"deleting {slug}")
+            await clear_urls(slug)
+            return Response(status_code=200)
+    
+    return Response(status_code=404)
 
 
 if __name__ == "__main__":

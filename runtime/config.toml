@@ -1,4 +1,4 @@
-db_path = 'runtime/urls.db'
+db_url = 'sqlite:///./runtime/urls.db'
 
 [api_keys]
 dev = "12345"
