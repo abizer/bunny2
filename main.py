@@ -1,42 +1,41 @@
-import importlib
-import os
-import re
-import sqlite3
-import sys
-from typing import List, Any, Tuple
 import logging
+import os
+from typing import Any, List
 
-from fastapi import FastAPI, Request, Response, Depends, HTTPException
+import databases
+import sqlalchemy
+import toml
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
-from fastapi.encoders import jsonable_encoder
-import toml
-
-import sqlalchemy
-import databases
 
 logger = logging.getLogger(__name__)
 
 # get the plugins
-from plugins import plugin_registry, load_plugins, Action, Lookup
+from plugins import Action, Lookup, load_plugins, plugin_registry
+
 load_plugins()
 
 # load config
-DEFAULT_CONFIG_PATH = 'runtime/config.toml'
+DEFAULT_CONFIG_PATH = "runtime/config.toml"
 config_root = os.path.dirname(os.path.abspath(__file__))
 config_path = os.path.join(config_root, DEFAULT_CONFIG_PATH)
 
-with open(config_path, 'r') as config_file:
+with open(config_path, "r") as config_file:
     config = toml.load(config_file)
     DB_URL = config["db_url"]
     api_keys = set(config["api_keys"].values())
 
 # some basic security to protect against randoms
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+
 def authenticated(api_key: str = Depends(oauth2_scheme)):
     if api_key not in api_keys:
         raise HTTPException(status_code=401)
-    
+
+
 # connect to db
 database = databases.Database(DB_URL)
 metadata = sqlalchemy.MetaData()
@@ -47,12 +46,11 @@ urls = sqlalchemy.Table(
     sqlalchemy.Column("url", sqlalchemy.String),
 )
 
-engine = sqlalchemy.create_engine(
-    DB_URL, connect_args={"check_same_thread": False}
-)
+engine = sqlalchemy.create_engine(DB_URL, connect_args={"check_same_thread": False})
 metadata.create_all(engine)
 
 app = FastAPI()
+
 
 @app.on_event("startup")
 async def startup():
@@ -63,23 +61,28 @@ async def startup():
 async def shutdown():
     await database.disconnect()
 
+
 async def lookup_url_for_slug(slug: str) -> str:
     query = urls.select().where(urls.c.slug == slug)
     result = await database.fetch_one(query)
     return result["url"] if result else None
 
+
 async def update_url_for_slug(slug: str, url: str) -> None:
     query = f"INSERT OR REPLACE INTO urls (slug, url) VALUES (:slug, :url)"
     await database.execute(query=query, values={"slug": slug, "url": url})
+
 
 async def list_urls(n: int = 100):
     query = urls.select().limit(n)
     result = await database.fetch_all(query)
     return result
 
+
 async def clear_urls(slug: str):
     query = urls.delete().where(urls.c.slug == slug)
     await database.execute(query)
+
 
 # not sure why i'm reimplementing the builtin path based dispatcher logic
 # to do it this way. ill figure out how to do that later
@@ -117,6 +120,7 @@ def process_path(path: str, payload: bytes = None) -> str:
     logger.debug(f"process_path: {path} => {action}")
     return action
 
+
 def process_payload(path: str, payload: bytes) -> str:
     """convert the given payload to a url
 
@@ -130,65 +134,67 @@ def process_payload(path: str, payload: bytes) -> str:
 
     if is_url:
         return bytes.decode(payload).strip()
-    
+
 
 # ====== app routing logic =============================
 @app.get("/list", dependencies=[Depends(authenticated)])
 async def list():
     return await list_urls(n=100)
 
+
 @app.get("/{path:path}")
 async def bounce(path: str):
     action = process_path(path)
-    
+
     url = None
     match action:
-        case ('lookup', slug):
+        case ("lookup", slug):
             url = await lookup_url_for_slug(slug)
-        case ('redirect', target):
+        case ("redirect", target):
             url = target
 
     # default case is to google whatever was passed in
     if not url:
         logger.debug(f"action or lookup failed: googling {path}")
-        google = plugin_registry['plugins.expansions.google'][1]
+        google = plugin_registry["plugins.expansions.google"][1]
         _, url = google(None, None, query=path)
 
     logger.info(f"bounced {path} => {url}")
     return RedirectResponse(url)
 
-    
+
 @app.post("/{path:path}", dependencies=[Depends(authenticated)])
 async def update(path: str, request: Request):
     logger.debug(f"update request: {path}")
     payload = await request.body()
     url = process_payload(path, payload)
 
-
     # action should be a ('lookup', slug)
     action = process_path(path, url)
 
     match action:
-        case ('lookup', slug):
+        case ("lookup", slug):
             logger.info(f"updating {slug} => {url}")
             await update_url_for_slug(slug, url)
             return RedirectResponse(url)
-    
+
     return Response(status_code=404)
+
 
 @app.delete("/{path:path}", dependencies=[Depends(authenticated)])
 async def delete(path: str):
     action = process_path(path)
 
     match action:
-        case ('lookup', slug):
+        case ("lookup", slug):
             logger.info(f"deleting {slug}")
             await clear_urls(slug)
             return Response(status_code=200)
-    
+
     return Response(status_code=404)
 
 
 if __name__ == "__main__":
     from uvicorn import run
+
     run(app, host="127.0.0.1", port=8000)
