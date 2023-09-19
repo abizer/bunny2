@@ -15,7 +15,6 @@ import toml
 import sqlalchemy
 import databases
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # get the plugins
@@ -102,10 +101,12 @@ class Dispatcher:
     def get_action(self, path: str, payload: bytes) -> Action:
         action = self._dispatch(plugin_registry, path, payload)
         if not action:
-            # if no regex rules applied, the default is to try a lookup
+            # if no regex rules matched, the default is to treat it as a slug
+            # and try a database lookup
             logger.debug(f"{path} matched no rules, looking up as slug")
             return Lookup(path)
         else:
+            # return whatever the action was if it matched something
             return action
 
 
@@ -113,7 +114,7 @@ def process_path(path: str, payload: bytes = None) -> str:
     # the api is always path -> (action, target)
     # where action can be ('lookup', 'redirect')
     action = Dispatcher().get_action(jsonable_encoder(path), payload)
-    logger.debug(f"{path} => {action}")
+    logger.debug(f"process_path: {path} => {action}")
     return action
 
 def process_payload(path: str, payload: bytes) -> str:
@@ -153,7 +154,7 @@ async def bounce(path: str):
         google = plugin_registry['plugins.expansions.google'][1]
         _, url = google(None, None, query=path)
 
-    logger.debug(f"{path} => {url}")
+    logger.info(f"bounced {path} => {url}")
     return RedirectResponse(url)
 
     
