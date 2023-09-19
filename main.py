@@ -8,7 +8,7 @@ import sqlalchemy
 import toml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, HTTPBasic, HTTPBasicCredentials
 
 logging.basicConfig(level=logging.DEBUG)
@@ -154,9 +154,45 @@ def process_payload(path: str, payload: bytes) -> str:
 
 
 # ====== app routing logic =============================
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=404)
+
 @app.get("/list", dependencies=[Depends(authenticated)])
 async def list():
     return await list_urls(n=100)
+
+async def get_new_shorturl_form(request: Request):
+    if request.method == "POST":
+        form_data = await request.form()
+        return form_data
+    return None
+
+@app.get("/new", dependencies=[Depends(authenticated_basic)])
+@app.post("/new", dependencies=[Depends(authenticated_basic)])
+async def new_slug(request: Request, form_data: dict = Depends(get_new_shorturl_form)):
+    if request.method == "GET":
+        html_content = """
+        <form method="post">
+            <input type="text" name="url" placeholder="url" /><br>
+            <input type="text" name="slug" placeholder="slug" /><br>
+            <input type="submit">
+        </form>
+        """
+        return HTMLResponse(content=html_content)
+    elif request.method == "POST":
+        slug = form_data.get("slug")
+        url = form_data.get("url")
+
+        if not url:
+            return RedirectResponse("/new")
+
+        if not slug:
+            shorten = plugin_registry["plugins.shorten.shorten"][1]
+            slug = shorten(None, payload=url)
+
+    await update_url_for_slug(slug, url)
+    return Response(status_code=200, content=f"/{slug}")
 
 
 @app.get("/{path:path}")

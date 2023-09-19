@@ -21,6 +21,10 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
 
+    location /favicon.ico {
+        return 404;
+    }
+
     location / {
         proxy_pass <endpoint>;
         proxy_set_header Host $host;
