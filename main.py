@@ -134,6 +134,8 @@ def process_payload(path: str, payload: bytes) -> str:
 
     if is_url:
         return bytes.decode(payload).strip()
+    else:
+        return None
 
 
 # ====== app routing logic =============================
@@ -168,6 +170,8 @@ async def update(path: str, request: Request):
     logger.debug(f"update request: {path}")
     payload = await request.body()
     url = process_payload(path, payload)
+    if not url:
+        return Response(status_code=404)
 
     # action should be a ('lookup', slug)
     action = process_path(path, url)
