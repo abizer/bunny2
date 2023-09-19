@@ -1,6 +1,7 @@
 import logging
 import os
 from typing import Any, List
+import secrets
 
 import databases
 import sqlalchemy
@@ -8,8 +9,9 @@ import toml
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import RedirectResponse
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, HTTPBasic, HTTPBasicCredentials
 
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # get the plugins
@@ -26,13 +28,26 @@ with open(config_path, "r") as config_file:
     config = toml.load(config_file)
     DB_URL = config["db_url"]
     api_keys = set(config["api_keys"].values())
+    basic_user = config["basic_user"]
+    basic_passwd = config["basic_passwd"]
 
 # some basic security to protect against randoms
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+http_basic = HTTPBasic()
 
 
 def authenticated(api_key: str = Depends(oauth2_scheme)):
     if api_key not in api_keys:
+        logger.info(f"bearer auth failed: {api_key}")
+        raise HTTPException(status_code=401)
+
+
+def authenticated_basic(credentials: HTTPBasicCredentials = Depends(http_basic)):
+    user = secrets.compare_digest(credentials.username, basic_user)
+    passwd = secrets.compare_digest(credentials.password, basic_passwd)
+
+    if not (user and passwd):
+        logger.info(f"basic auth failed: {user}/{passwd}")
         raise HTTPException(status_code=401)
 
 
