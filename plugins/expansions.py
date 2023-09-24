@@ -2,9 +2,8 @@ from . import Redirect, register, Action, Payload, Lookup
 
 
 @register(r"^pypi ?(?P<pkg>\w+)")
-def homebrew(dispatcher, payload: Payload, pkg: str) -> Action:
+def pypi(dispatcher, payload: Payload, pkg: str) -> Action:
     return Redirect(f"https://pypi.org/project/{pkg}/")
-
 
 @register(r"^brew ?(?P<pkg>\w+)")
 def homebrew(dispatcher, payload: Payload, pkg: str) -> Action:
