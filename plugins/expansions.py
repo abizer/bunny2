@@ -1,5 +1,9 @@
 from . import Redirect, register, Action, Payload, Lookup
 
+@register(r"^brew ?(?P<pkg>\w+)")
+def homebrew(dispatcher, payload: Payload, pkg: str) -> Action:
+    return Redirect(f"https://formulae.brew.sh/formula/{pkg}")
+
 @register(r"^h ?(?P<idx>\d+)")
 def hobby(dispatcher, payload: Payload, idx: int) -> Action:
     return Lookup(f"hobby/{idx}")
